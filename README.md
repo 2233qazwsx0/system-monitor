@@ -271,4 +271,4 @@ A：`pkg install python python-pip` 后 `pip install psutil`。
 
 -------------
 
-> 最后更新：2025 · Built with ❤️
+> 最后更新：2026 · Built with ❤️
