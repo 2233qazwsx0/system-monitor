@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ─── System Monitor · 跨平台一键安装 & 启动 v2.1.1 ──────────────────────────
+# ─── System Monitor · 跨平台一键安装 & 启动 v2.2.0 ──────────────────────────
 #   bash setup.sh [--port 8080] [--dev] [--docker] [--force]
 #   bash setup.sh [--port-probe M N]
 #   bash setup.sh --dry-run       # 预设前 6 步，不启动服务
@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo -e "${M}⬡ System Monitor${N} ${DIM}v2.1.1${N}  ·  跨平台部署"
+echo -e "${M}⬡ System Monitor${N} ${DIM}v2.2.0${N}  ·  跨平台部署"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════
