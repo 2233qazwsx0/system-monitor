@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #1a1c27;
+    --border: #2a2d3a;
+    --text: #d4d4e8;
+    --muted: #6e7191;
+    --green: #22c55e;
+    --blue: #3b82f6;
+    --yellow: #eab308;
+    --red: #ef4444;
+    --purple: #a78bfa;
+    --cyan: #06b6d4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 18px; margin-bottom: 4px; letter-spacing: 0.05em; }
+  .subtitle { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+  .status-bar {
+    display: flex; gap: 16px; align-items: center; margin-bottom: 16px;
+    font-size: 12px; color: var(--muted);
+  }
+  .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+    background: var(--red); transition: background 0.3s;
+  }
+  .dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
+    gap: 16px;
+  }
+
+  /* 告警横幅 */
+  #alert-ticker {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 999;
+    background: rgba(239,68,68,.12);
+    border-bottom: 1px solid rgba(239,68,68,.35);
+    color: #ef4444;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 20px;
+    backdrop-filter: blur(8px);
+    animation: alertFlash 2s ease-in-out infinite alternate;
+  }
+  #alert-ticker.show { display: flex; align-items: center; gap: 10px; }
+  #alert-ticker .alerts-list {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .alert-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(239,68,68,.18);
+    border: 1px solid rgba(239,68,68,.4);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
+  .alert-chip.clear {
+    background: rgba(34,197,94,.18);
+    border-color: rgba(34,197,94,.4);
+    color: #22c55e;
+  }
+  @keyframes alertFlash {
+    from { background: rgba(239,68,68,.08); }
+    to   { background: rgba(239,68,68,.18); }
+  }
+
+  #alert-panel {
+    display: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  #alert-panel.show { display: block; }
+  .alert-history {
+    list-style: none;
+    font-size: 12px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .alert-history li {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .alert-history li.fire { color: #ef4444; }
+  .alert-history li.clear { color: #22c55e; }
+  .alert-time { color: var(--muted); font-size: 11px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600; margin-bottom: 12px;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  }
+  .chart { width: 100%; height: 240px; }
+  .metrics { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 12px; }
+  .metric { font-size: 12px; }
+  .metric span { color: var(--muted); }
+  .value { font-size: 16px; font-weight: 700; margin: 2px 0; }
+</style>
+</head>
+<body>
+
+<h1>⬡ System Monitor</h1>
+<p class="subtitle">CPU · 内存· 磁盘IO · 实时看板 · 1s 更新 · 最多保留 1h</p>
+
+<div class="status-bar">
+  <span><span class="dot" id="ws-dot"></span><span id="ws-status">连接中…</span></span>
+  <span id="sample-count">0 samples</span>
+  <span id="clock" style="margin-left:auto;"></span>
+</div>
+
+<div id="alert-ticker">
+  <span>⚠️ ALERTS</span>
+  <span class="alerts-list" id="alerts-list"></span>
+  <button style="margin-left:auto;background:none;border:1px solid rgba(239,68,68,.5);color:#ef4444;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;"
+    id="alert-dismiss">DISMISS</button>
+</div>
+
+<div id="alert-panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <div class="card-title">▎ Alert History</div>
+    <button style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;"
+      id="alert-clear-history">Clear</button>
+  </div>
+  <ul class="alert-history" id="alert-history"></ul>
+</div>
+
+<div class="chart-grid">
+  <!-- CPU -->
+  <div class="card">
+    <div class="card-title">▎ CPU Overall</div>
+    <div id="cpu-chart" class="chart"></div>
+    <div class="metrics" id="cpu-meta"></div>
+  </div>
+
+  <!-- 内存 -->
+  <div class="card">
+    <div class="card-title">▎ Memory</div>
+    <div id="mem-chart" class="chart"></div>
+    <div class="metrics" id="mem-meta"></div>
+  </div>
+
+  <!-- 磁盘 IO -->
+  <div class="card">
+    <div class="card-title">▎ Disk IO (read / write MB/s)</div>
+    <div id="disk-chart" class="chart"></div>
+    <div class="metrics" id="disk-meta"></div>
+  </div>
+
+  <!-- 磁盘空间 -->
+  <div class="card">
+    <div class="card-title">▎ Disk Space</div>
+    <div id="usage-chart" class="chart"></div>
+    <div class="metrics" id="usage-meta"></div>
+  </div>
+
+  <!-- GPU -->
+  <div class="card">
+    <div class="card-title">▎ GPU</div>
+    <div id="gpu-chart" class="chart"></div>
+    <div class="metrics" id="gpu-meta"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ─── 配置 ─── */
+const WS_URL = `ws://${location.host}/ws`;
+const MAX_POINTS = 3600;   // 对应 backend MAX_SAMPLES
+const CHART_COLORS = ['#3b82f6','#22c55e','#eab308','#ef4444','#a78bfa','#06b6d4','#f97316','#ec4899'];
+
+/* ─── 状态 ─── */
+let ws, live = true, sampleCount = 0;
+const times = [], cpuSeries = [];     // CPU 时间线
+const memUsed = [], memAvail = [];   // 内存时间线
+const diskRead = [], diskWrite = []; // IO 时间线
+const gpuUtil = [], gpuMem = [];     // GPU 时间线
+let _prevRead = null, _prevWrite = null, _prevReadTs = null;
+
+/* ─── 工具 ─── */
+function fmtMB(bps) { return (bps / 1e6).toFixed(1); }
+function heatColor(v) {
+  if (v < 40) return '#22c55e';
+  if (v < 70) return '#eab308';
+  return '#ef4444';
+}
+function round(v, d) { return +v.toFixed(d || 0); }
+
+function initChart(id, opts) {
+  const el = document.getElementById(id);
+  const c = echarts.init(el, 'dark');
+  window.addEventListener('resize', () => c.resize());
+  return c;
+}
+
+// 缓存 DOM 引用
+const sampleEl = document.getElementById('sample-count');
+const clockEl   = document.getElementById('clock');
+const cpuMeta   = document.getElementById('cpu-meta');
+const memMeta   = document.getElementById('mem-meta');
+const diskMeta  = document.getElementById('disk-meta');
+const gpuMeta   = document.getElementById('gpu-meta');
+const usageMeta = document.getElementById('usage-meta');
+
+const cpuChart  = initChart('cpu-chart', {
+  tooltip: {trigger:'axis'},
+  xAxis:{type:'category',boundaryGap:false,axisLabel:{color:'#6e7191'}},
+  yAxis:{type:'value',min:0,max:100,name:'%',axisLabel:{color:'#6e7191'}},
+  series:[{name:'CPU%',type:'line',smooth:false,symbol:'none',
+    lineStyle:{width:1.5},areaStyle:{color:'rgba(59,130,246,.1)'},
+    data: cpuSeries}]
+});
+const memChart = initChart('mem-chart', {
+  tooltip: {trigger:'axis'},
+  xAxis:{type:'category',boundaryGap:false,axisLabel:{color:'#6e7191'}},
+  yAxis:{type:'value',min:0,max:100,name:'%',axisLabel:{color:'#6e7191'}},
+  series:[
+    {name:'已用%',type:'line',smooth:false,symbol:'none',
+     lineStyle:{width:1.5,color:'#eab308'},areaStyle:{color:'rgba(234,179,8,.12)'},data:memUsed},
+    {name:'可用%',type:'line',smooth:false,symbol:'none',
+     lineStyle:{width:1.5,color:'#3b82f6'},data:memAvail}
+  ]
+});
+const diskChart = initChart('disk-chart', {
+  tooltip:{trigger:'axis'},
+  xAxis:{type:'category',boundaryGap:false,axisLabel:{color:'#6e7191'}},
+  yAxis:{type:'value',name:'MB/s',axisLabel:{color:'#6e7191'}},
+  series:[
+    {name:'Read',type:'line',symbol:'none',lineStyle:{color:'#3b82f6',width:1},data:diskRead},
+    {name:'Write',type:'line',symbol:'none',lineStyle:{color:'#ef4444',width:1},data:diskWrite},
+  ]
+});
+const usageChart = initChart('usage-chart', {
+  tooltip:{trigger:'axis'},
+  xAxis:{type:'category',axisLabel:{color:'#6e7191'}},
+  yAxis:{type:'value',name:'Used%',max:100,axisLabel:{color:'#6e7191'}},
+  series:[]
+});
+const gpuChart = initChart('gpu-chart', {
+  tooltip:{trigger:'axis'},
+  xAxis:{type:'category',boundaryGap:false,axisLabel:{color:'#6e7191'}},
+  yAxis:{type:'value',name:'%',axisLabel:{color:'#6e7191'}},
+  series:[]
+});
+
+function shiftMax(arr, max) {
+  while (arr.length > max) arr.shift();
+}
+
+/* ─── 更新 UI ─── */
+
+function setCPU(data) {
+  times.push(data._time);
+  cpuSeries.push(data.cpu.overall);
+  shiftMax(times, MAX_POINTS); shiftMax(cpuSeries, MAX_POINTS);
+  cpuChart.setOption({
+    xAxis:{ data: times },
+    series:[{ data: cpuSeries }],
+  });
+  cpuMeta.innerHTML = `
+    <div class="metric">整体: <span class="value" style="color:${heatColor(data.cpu.overall)}">${data.cpu.overall}%</span></div>
+    <div class="metric">核心: <span>${data.cpu.core_count} cores</span></div>
+    <div class="metric">频率: <span>${data.cpu.freq_mhz} MHz</span></div>
+    <div class="metric">采样: <span>${data._time}</span></div>
+  `;
+}
+
+function setMemory(data) {
+  memUsed.push(data.memory.percent);
+  memAvail.push(round(data.memory.available_gb / data.memory.total_gb * 100, 1));
+  shiftMax(memUsed, MAX_POINTS); shiftMax(memAvail, MAX_POINTS);
+  memChart.setOption({
+    xAxis:{ data: times.slice(-MAX_POINTS) },
+    series:[
+      { name:'已用%', data: memUsed.slice(-MAX_POINTS) },
+      { name:'可用%', data: memAvail.slice(-MAX_POINTS) },
+    ],
+  });
+  memMeta.innerHTML = `
+    <div class="metric">已用: <span class="value" style="color:#eab308">${data.memory.used_gb} / ${data.memory.total_gb} GB</span></div>
+    <div class="metric">可用: <span class="value" style="color:#3b82f6">${data.memory.available_gb} GB</span></div>
+    <div class="metric">已用%: <span class="value">${data.memory.percent}%</span></div>
+    <div class="metric">Swap: <span>${data.memory.swap_used_gb} / ${data.memory.swap_total_gb} GB (${data.memory.swap_percent}%)</span></div>
+  `;
+}
+
+function setGPU(data) {
+  if (!data.gpu || !data.gpu.count) {
+    gpuUtil.push(0); gpuMem.push(0);
+    shiftMax(gpuUtil, MAX_POINTS); shiftMax(gpuMem, MAX_POINTS);
+    gpuChart.setOption({
+      xAxis:{ data: times.slice(-MAX_POINTS) },
+      series:[{name:'GPU%', data: gpuUtil.slice(-MAX_POINTS)}]
+    });
+    gpuMeta.innerHTML = `<div class="metric">无 GPU 或 nvidia-smi 不可用</div>`;
+    return;
+  }
+  gpuUtil.push(data.gpu.overall_util_percent);
+  gpuMem.push(data.gpu.overall_memory_percent);
+  shiftMax(gpuUtil, MAX_POINTS); shiftMax(gpuMem, MAX_POINTS);
+  const gc = data.gpu;
+  const perGpuHtml = gc.gpus.map((g, i) =>
+    `<div class="metric" style="flex:1 1 45%"><span>GPU ${i}</span><br>
+    <span class="value" style="color:${heatColor(g.util_percent)}">${g.util_percent}%</span>
+    <span> ${g.memory_used_mb}/${g.memory_total_mb} MB (${g.memory_percent}%)</span></div>`
+  ).join('');
+  gpuChart.setOption({
+    xAxis:{ data: times.slice(-MAX_POINTS) },
+    series:[
+      {name:'GPU%',  type:'line',symbol:'none',lineStyle:{color:'#a78bfa',width:1.5},areaStyle:{color:'rgba(167,139,250,.12)'},data:gpuUtil.slice(-MAX_POINTS)},
+      {name:'显存%', type:'line',symbol:'none',lineStyle:{color:'#06b6d4',width:1.5},data:gpuMem.slice(-MAX_POINTS)},
+    ],
+  });
+  gpuMeta.innerHTML = `
+    <div class="metric">GPU 数量: <span>${gc.count}</span></div>
+    <div class="metric">平均利用率: <span class="value" style="color:${heatColor(gc.overall_util_percent)}">${gc.overall_util_percent}%</span></div>
+    <div class="metric">峰值利用率: <span class="value" style="color:${heatColor(gc.max_util_percent)}">${gc.max_util_percent}%</span></div>
+    ${perGpuHtml}
+  `;
+}
+
+// Disk IO delta tracking
+let _prevRead = null, _prevWrite = null, _prevReadTs = null;
+
+function setDisk(data) {
+  const dp = data.disk;
+  // Δ IO rate computation
+  const ts = data._ts;
+  const rNow = dp.total_read_gb * 1e9, wNow = dp.total_write_gb * 1e9;
+  if (_prevReadTs !== null && _prevReadTs !== ts && ts - _prevReadTs > 0) {
+    const dt = ts - _prevReadTs;
+    const rRate = Math.max(0, rNow - _prevRead) / dt / 1e6; // MB/s
+    const wRate = Math.max(0, wNow - _prevWrite) / dt / 1e6;
+    diskRead.push(+rRate.toFixed(1));
+    diskWrite.push(+wRate.toFixed(1));
+    shiftMax(diskRead, MAX_POINTS); shiftMax(diskWrite, MAX_POINTS);
+    diskChart.setOption({
+      xAxis: { data: times.slice(-MAX_POINTS) },
+      series: [
+        { name: 'Read',  data: diskRead.slice(-MAX_POINTS) },
+        { name: 'Write', data: diskWrite.slice(-MAX_POINTS) },
+      ],
+    });
+  }
+  _prevRead = rNow; _prevWrite = wNow; _prevReadTs = ts;
+
+  // 累计总量
+  diskMeta.innerHTML = `
+    <div class="metric">累计读: <span class="value" style="color:#3b82f6">${dp.total_read_gb} GB</span></div>
+    <div class="metric">累计写: <span class="value" style="color:#ef4444">${dp.total_write_gb} GB</span></div>
+    <div class="metric">分区数: <span>${Object.keys(dp.partitions).length}</span></div>
+    <div class="metric">采样: <span>${data._time}</span></div>
+  `;
+  // 磁盘使用率横条
+  const cats = Object.keys(dp.partitions);
+  const vals = cats.map(c => dp.partitions[c].percent);
+  usageChart.setOption({
+    xAxis:{ data: cats },
+    series:[{ type:'bar', data:vals,
+      itemStyle:{
+        borderRadius:[4,4,0,0],
+        color: function(p) { return CHART_COLORS[p.dataIndex % CHART_COLORS.length]; },
+      },
+    }],
+  });
+  usageMeta.innerHTML = cats.map(c => {
+    const p = dp.partitions[c];
+    return `<div class="metric" style="flex:1 1 45%">
+      <span>${c}</span><br>
+      <span class="value" style="color:${heatColor(p.percent)}">${p.percent}%</span>
+      <span> ${p.free_gb} free / ${p.total_gb} GB</span>
+    </div>`;
+  }).join('');
+}
+
+/* ─── WebSocket ─── */
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.addEventListener('open', () => {
+    document.getElementById('ws-dot').classList.add('live');
+    document.getElementById('ws-status').textContent = '实时推送中';
+
+    // 回填历史（从后端拉最近 60s 存量数据）
+    fetch('/api/history/snapshot?since=' + Math.floor(Date.now()/1000 - 60))
+      .then(r => r.json())
+      .then(resp => {
+        resp.data.forEach(d => {
+          times.push(d._time);
+          cpuSeries.push(d.cpu.overall);
+          memUsed.push(Math.round(d.memory.percent));
+          memAvail.push(Math.round(d.memory.available_gb / d.memory.total_gb * 100));
+          sampleCount++;
+        });
+        cpuChart.setOption({xAxis:{data: times}, series:[{data: cpuSeries}]});
+        memChart.setOption({
+          xAxis:{data:times},
+          series:[
+            {name:'已用%',data: memUsed},
+            {name:'可用%',data: memAvail},
+          ],
+        });
+      });
+  });
+  ws.addEventListener('message', e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'pong') return;
+    // 数据帧
+    if (d.cpu) {
+      sampleCount++;
+      sampleEl.textContent = sampleCount + ' samples';
+      clockEl.textContent = d._time;
+      setCPU(d);
+      setMemory(d);
+      setDisk(d);
+      setGPU(d);
+    }
+    // 告警帧
+    if (d.type === 'alert') {
+      handleAlert(d);
+    }
+  });
+  ws.addEventListener('close', () => {
+    document.getElementById('ws-dot').classList.remove('live');
+    document.getElementById('ws-status').textContent = '断开 — 3s 后重连…';
+    setTimeout(connect, 3000);
+  });
+  ws.addEventListener('error', () => ws.close());
+}
+
+connect();
+
+/* ═══════════════ 告警系统 ═══════════════ */
+function handleAlert(d) {
+  const ticker  = document.getElementById('alert-ticker');
+  const list    = document.getElementById('alerts-list');
+  const panel   = document.getElementById('alert-panel');
+  const history = document.getElementById('alert-history');
+
+  const chip = document.createElement('span');
+  chip.className = 'alert-chip' + (d.event === 'clear' ? ' clear' : '');
+  chip.textContent = d.message || `${d.event}: ${d.alert_id}`;
+  if (d.event === 'clear') {
+    chip.style.opacity = '0.6';
+    setTimeout(() => chip.remove(), 5000);
+  }
+
+  if (d.event === 'fire') {
+    ticker.classList.add('show');
+    list.appendChild(chip);
+  } else {
+    chip.className = 'alert-chip clear';
+    chip.textContent = d.message;
+    ticker.classList.remove('show');
+    setTimeout(() => chip.remove(), 5000);
+  }
+
+  // History log
+  const li = document.createElement('li');
+  li.className = d.event;
+  li.innerHTML = `<span>${d.alert_id || 'system'}: ${d.message || ''}</span><span class="alert-time">${new Date((d.ts||0)*1000).toLocaleTimeString()}</span>`;
+  history.prepend(li);
+  panel.classList.add('show');
+  history.parentElement.parentElement.parentElement.classList.add('show');
+}
+
+document.getElementById('alert-dismiss').addEventListener('click', () => {
+  document.getElementById('alert-ticker').classList.remove('show');
+  document.getElementById('alerts-list').innerHTML = '';
+});
+document.getElementById('alert-clear-history').addEventListener('click', () => {
+  document.getElementById('alert-history').innerHTML = '';
+});
+
+/* ═══════════════ __proto__ 防护 ═══════════════ */
+Object.freeze(Object.prototype);
+</script>
+</body>
+</html>
