@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  system-monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: system-monitor:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    volumes:
+      - /proc:/proc:ro
+      - /sys:/sys:ro
+      - /:/rootfs:ro
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
