@@ -26,6 +26,13 @@ All notable changes to System Monitor are documented here.
 - `setup.sh` v2.1.1: 7-step installer (platform → pre-check → paths → deps → port → permission → launch)
 - `server.py` v2.1.1: desktop notification + alert engine integration
 
+### Added — Termux API Integration
+- `termux-api` Python package + Termux:APK auto-detect
+- Battery / Location / Camera / Sensors / Telephony / Wifi / Brightness / Volume collectors
+- 20 `/api/termux/*` REST endpoints (query / control / sms / screenshot …)
+- `collect_all()` auto-hooks Termux data into main snapshot stream
+- Graceful silent fallback on non-Termux platforms
+
 ## [2.1.0] — 2025-05-xx
 
 ### Added
